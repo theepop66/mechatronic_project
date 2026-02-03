@@ -27,5 +27,3 @@ Before hardware implementation, the system was modeled and trained in **MATLAB/S
 
 
 
-## 📜 License
-This project is open-source under the MIT License.
