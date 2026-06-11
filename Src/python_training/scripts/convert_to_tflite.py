@@ -12,13 +12,14 @@ MODEL_DIR = "models"
 WEIGHTS_PATH = os.path.join(MODEL_DIR, "best_suspension_dqn.weights.h5")
 FLOAT32_PATH = os.path.join(MODEL_DIR, "model_float32.tflite")
 INT8_PATH = os.path.join(MODEL_DIR, "model_int8.tflite")
-HEADER_PATH = "esp32/suspension_inference/src/suspension_model.h"
+HEADER_PATH = os.path.join(os.path.dirname(__file__), "../../esp32_firmware/RL_board/src/suspension_model.h")
+HEADER_PATH = os.path.normpath(HEADER_PATH)
 REPRESENTATIVE_DATA_PATH = os.path.join(os.path.dirname(__file__), "representative_data.npy")
 
-STATE_SIZE = 3
+STATE_SIZE = 2
 ACTION_SIZE = 10
 
-_OBS_SCALE = np.array([150.0, 3.0, 50.0], dtype=np.float32)
+_OBS_SCALE = np.array([150.0, 50.0], dtype=np.float32)
 
 def build_model():
     model = keras.Sequential([
@@ -37,13 +38,8 @@ def generate_representative_dataset(num_samples=500):
     while len(samples) < num_samples:
         action = env.action_space.sample()
         next_state, _, terminated, truncated, _ = env.step(action)
-        rel_vel = next_state[1]
-        obs = np.array([
-            env.Ke * rel_vel,
-            rel_vel,
-            next_state[2]
-        ], dtype=np.float32)
-        samples.append(obs)
+        # next_state is 2-D: [Voltage, zs_ddot]
+        samples.append(next_state.astype(np.float32))
         if terminated or truncated:
             state, _ = env.reset()
         else:
@@ -60,9 +56,8 @@ def representative_dataset():
         yield [data[i:i+1]]
 
 def convert_to_tflite(model):
-    model.save_weights(WEIGHTS_PATH.replace("best", "tmp"))
     saved_model_dir = os.path.join(MODEL_DIR, "tmp_savedmodel")
-    model.save(saved_model_dir)
+    model.export(saved_model_dir)
     try:
         converter = tf.lite.TFLiteConverter.from_saved_model(saved_model_dir)
         converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS]
@@ -86,9 +81,6 @@ def convert_to_tflite(model):
     finally:
         import shutil
         shutil.rmtree(saved_model_dir, ignore_errors=True)
-        tmp_weights = WEIGHTS_PATH.replace("best", "tmp")
-        if os.path.exists(tmp_weights):
-            os.remove(tmp_weights)
     return float32_tflite, int8_tflite
 
 def generate_c_header(tflite_data, header_path):
@@ -164,14 +156,14 @@ def verify_accuracy(float32_tflite, int8_tflite, num_samples=5):
         match = action_f32 == action_i8
         if match:
             matches += 1
-        print(f"    [{i}] float32 action={action_f32}  int8 action={action_i8}  {'✅' if match else '❌'}")
+        print(f"    [{i}] float32 action={action_f32}  int8 action={action_i8}  {'OK' if match else 'MISMATCH'}")
 
     match_rate = matches / total * 100
     print(f"\n  int8 action match rate: {match_rate:.1f}%")
     if match_rate < 90:
-        print("  ⚠️  WARNING: Match rate < 90%. Retrain with wider dataset or skip quantisation.")
+        print("  WARNING: Match rate < 90%. Retrain with wider dataset or skip quantisation.")
     else:
-        print("  ✅ Match rate >= 90% — int8 quantisation is safe.")
+        print("  Match rate >= 90% - int8 quantisation is safe.")
     return match_rate
 
 def main():
@@ -197,16 +189,11 @@ def main():
     print(f"  Parameters: {model.count_params()}")
 
     print("[2/5] Loading weights...")
-    dummy_weights = WEIGHTS_PATH.replace("best_", "tmp_best_")
-    if os.path.exists(dummy_weights):
-        os.remove(dummy_weights)
     try:
         model.load_weights(best_weights)
     except Exception as e:
         print(f"  ERROR loading weights: {e}")
         sys.exit(1)
-    if os.path.exists(dummy_weights):
-        os.remove(dummy_weights)
     print(f"  Loaded: {best_weights}")
 
     print("[3/5] Generating representative dataset...")
@@ -229,7 +216,7 @@ def main():
     print("-" * 50)
     verify_accuracy(float32_tflite, int8_tflite, num_samples=5)
 
-    print("\n✅ Conversion complete.")
+    print("\n== Conversion complete.")
     print(f"   float32: {os.path.getsize(FLOAT32_PATH)/1024:.1f} KB  ({FLOAT32_PATH})")
     print(f"   int8:    {os.path.getsize(INT8_PATH)/1024:.1f} KB  ({INT8_PATH})")
     print(f"   header:  {os.path.getsize(HEADER_PATH)/1024:.1f} KB  ({HEADER_PATH})")

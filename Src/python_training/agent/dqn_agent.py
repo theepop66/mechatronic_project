@@ -7,7 +7,8 @@ from collections import deque
 
 class DQNAgent:
     # ค่าคงที่สำหรับ Normalize Input (ใช้ตรงกันกับ ESP32 firmware)
-    _OBS_SCALE = np.array([150.0, 3.0, 50.0], dtype=np.float32)
+    # Observation: [Voltage, zs_ddot] — rel_vel removed (redundant with Voltage)
+    _OBS_SCALE = np.array([150.0, 50.0], dtype=np.float32)
 
     def __init__(self, state_size, action_size):
         self.state_size = state_size
@@ -17,14 +18,14 @@ class DQNAgent:
         self.gamma = 0.95
         self.epsilon = 1.0
         self.epsilon_min = 0.01
-        self.epsilon_decay = 0.99         # per-episode
+        self.epsilon_decay = 0.995        # per-episode (0.995^920 ≈ 0.01, reaches min by ep ~920)
         self.learning_rate = 0.0005
         self.batch_size = 64
 
         # Polyak (soft target update)
-        self.tau = 0.005
+        self.tau = 0.005                  # softer updates per AGENTS.md spec
 
-        self.memory = deque(maxlen=10000)
+        self.memory = deque(maxlen=50000)
         self._train_step_counter = 0
 
         # สร้าง Main Network และ Target Network
